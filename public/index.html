@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Preview</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      display: flex;
+      height: 100vh;
+    }
+
+    .sidebar {
+      width: 300px;
+      background: #161b22;
+      border-right: 1px solid #30363d;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .preview {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 15px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .status-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #da3633;
+    }
+
+    .status-indicator.connected {
+      background: #3fb950;
+    }
+
+    .content {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .log {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 10px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .log.info {
+      border-left: 3px solid #1f6feb;
+      background: rgba(31, 111, 235, 0.1);
+    }
+
+    .log.success {
+      border-left: 3px solid #3fb950;
+      background: rgba(63, 185, 80, 0.1);
+    }
+
+    .log.error {
+      border-left: 3px solid #da3633;
+      background: rgba(218, 54, 51, 0.1);
+    }
+
+    h2 {
+      margin-bottom: 15px;
+      font-size: 16px;
+      color: #f0883e;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-family: inherit;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #238636;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    button:hover {
+      background: #2ea043;
+    }
+
+    .clear-btn {
+      background: #da3633;
+      margin-top: 10px;
+    }
+
+    .clear-btn:hover {
+      background: #f85149;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>Send Message</h2>
+    <textarea id="messageInput" placeholder="Enter message to broadcast..."></textarea>
+    <button onclick="sendMessage()">Send Update</button>
+    <button class="clear-btn" onclick="clearLogs()">Clear Logs</button>
+  </div>
+
+  <div class="preview">
+    <div class="header">
+      <h1>Live Preview</h1>
+      <div class="status">
+        <div class="status-indicator" id="indicator"></div>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </div>
+    <div class="content" id="logs"></div>
+  </div>
+
+  <script>
+    let ws;
+    let token;
+
+    async function connectWebSocket() {
+      try {
+        // Get JWT token
+        const res = await fetch('/api/token', { method: 'POST' });
+        const { token: jwtToken } = await res.json();
+        token = jwtToken;
+
+        // Connect WebSocket
+        ws = new WebSocket(`ws://${window.location.host}?token=${jwtToken}`);
+
+        ws.onopen = () => {
+          updateStatus(true);
+          addLog('Connected to live preview server', 'success');
+        };
+
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.type === 'connected') {
+            addLog(message.message, 'info');
+          } else if (message.type === 'update') {
+            addLog(`Update received: ${message.data}\n[${message.timestamp}]`, 'info');
+          }
+        };
+
+        ws.onclose = () => {
+          updateStatus(false);
+          addLog('Disconnected from server', 'error');
+          setTimeout(connectWebSocket, 3000);
+        };
+
+        ws.onerror = (error) => {
+          addLog(`WebSocket error: ${error}`, 'error');
+        };
+      } catch (err) {
+        addLog(`Connection error: ${err.message}`, 'error');
+        setTimeout(connectWebSocket, 3000);
+      }
+    }
+
+    function updateStatus(connected) {
+      const indicator = document.getElementById('indicator');
+      const text = document.getElementById('statusText');
+      if (connected) {
+        indicator.classList.add('connected');
+        text.textContent = 'Connected';
+      } else {
+        indicator.classList.remove('connected');
+        text.textContent = 'Disconnected';
+      }
+    }
+
+    function addLog(message, type = 'info') {
+      const logsDiv = document.getElementById('logs');
+      const logElement = document.createElement('div');
+      logElement.className = `log ${type}`;
+      logElement.textContent = message;
+      logsDiv.appendChild(logElement);
+      logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const content = input.value.trim();
+      if (!content || !ws || ws.readyState !== WebSocket.OPEN) {
+        addLog('Cannot send: WebSocket not connected', 'error');
+        return;
+      }
+      ws.send(JSON.stringify({ content }));
+      addLog(`Sent: ${content}`, 'success');
+      input.value = '';
+    }
+
+    function clearLogs() {
+      document.getElementById('logs').innerHTML = '';
+    }
+
+    connectWebSocket();
+  </script>
+</body>
+</html>
